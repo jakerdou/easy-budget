@@ -162,7 +162,7 @@ async def get_allocated_and_spent(request: CategoriesWithAllocatedRequest):
         # else
         else:
             # delete item from cache
-            print(f'removing value from cache because of ttl. now: {now}, expiration: {gas_cache[req_hash]['expiration_time']}')
+            print(f'removing value from cache because of ttl. now: {now}, expiration: {gas_cache[req_hash]["expiration_time"]}')
             remove_from_cache(req_hash)
         
     try:
