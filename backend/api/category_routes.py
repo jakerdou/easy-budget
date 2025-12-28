@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 from typing import Optional
 from .db import db
 from backend.db.schemas import Category as CategorySchema
+import time
 
 router = APIRouter()
 
@@ -84,13 +85,87 @@ async def get_categories(request: UserIDRequest):
         # logger.error("Failed to get categories for user_id: %s, error: %s", request.user_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to get categories: %e")
 
+# TODO: implement eviction strategy, implement way to write through the cache whenever a transaction or assignment is added to that date range. could put start date and end date in cache value so that we can check if something occurs in those 
+gas_cache = {}
+# keep new dict of frequencies with dict of hashes
+freqs = {}
+capacity = 5
+start_time = time.perf_counter()
+ttl = 1200
+short_lived_ttl = 60
+
+def add_to_cache(key: str, val: object, short_lived: bool) -> None:
+    # cache[key] = {val, ttl, freq = 0}
+    if len(gas_cache) == capacity:
+        raise OverflowError('cache is at capacity, something went wrong')
+    
+    # print(f'short lived: {short_lived}, time: {time.perf_counter()}, expiration: {time.perf_counter() + short_lived_ttl if short_lived else ttl}')
+    gas_cache[key] = {
+        'value': val,
+        'expiration_time': time.perf_counter() + (short_lived_ttl if short_lived else ttl),
+        'frequency': 0
+    }
+    if 0 not in freqs:
+        freqs[0] = {}
+    freqs[0][key] = None
+
+def remove_from_cache(key: str | None = None) -> None:
+    try:
+        if key == None:
+            min_freq = min(freqs)
+            key = next(iter(freqs[min_freq]))
+        # print(f'key to remove: {key}')
+        # freq = cache[key][freq]
+        freq = gas_cache[key]['frequency']
+        # del cache[key]
+        # print(f'deleting from cache')
+        del gas_cache[key]
+        # del freqs[freq][key]
+        # print(f'deleting from freqs')
+        del freqs[freq][key]
+        if len(freqs[freq]) == 0:
+            del freqs[freq]
+    except Exception as e:
+        print(f'exception while removing: {e}')
+
+def read_from_cache(key: str) -> object:
+    # get frequency of key
+    freq = gas_cache[key]['frequency']
+    del freqs[freq][key]
+    # cleanup freq if no more values exist in it
+    if len(freqs[freq]) == 0:
+        del freqs[freq]
+    # add key to new frequency
+    if freq+1 not in freqs:
+        freqs[freq+1] = {}
+    freqs[freq+1][key] = None
+    # increment frequency
+    gas_cache[key]['frequency'] += 1
+    # return val
+    return gas_cache[key]['value']
+
+
 @router.post("/get-allocated-and-spent")
 async def get_allocated_and_spent(request: CategoriesWithAllocatedRequest):
-    try:        # Debug request information
-        # print(f"DEBUG - get-allocated-and-spent called with user_id: {request.user_id}")
-        # print(f"DEBUG - Start date: {request.start_date}")
-        # print(f"DEBUG - End date: {request.end_date}")
+    # hash request params
+    req_hash = hash(f'{request.user_id}{request.start_date}{request.end_date}')
+    # print(f'req hash: {req_hash}')
+    
+    # if hash is in cache
+    if req_hash in gas_cache:
+        # if now < ttl
+        now = time.perf_counter()
+        if now < gas_cache[req_hash]['expiration_time']:
+            # return cached value
+            print(f'cache hit, returning value from cache')
+            return read_from_cache(req_hash)
+        # else
+        else:
+            # delete item from cache
+            print(f'removing value from cache because of ttl. now: {now}, expiration: {gas_cache[req_hash]['expiration_time']}')
+            remove_from_cache(req_hash)
         
+    try:
         # Query categories with a `user_id` field equal to `request.user_id`
         categories_query = db.collection("categories").where("user_id", "==", request.user_id)
         categories_docs = categories_query.stream()
@@ -116,7 +191,6 @@ async def get_allocated_and_spent(request: CategoriesWithAllocatedRequest):
             assignments_query = db.collection("assignments").where("category_id", "==", doc.id).where("date", ">=", request.start_date).where("date", "<", next_day_str)
             # print(f"DEBUG - Using date range: {request.start_date} to {request.end_date} (exclusive upper bound: {next_day_str})")
 
-            # Try to catch any issues with the stream operation
             try:
                 # print(f"DEBUG - About to stream assignments for category {doc.id}")
                 assignments_docs = assignments_query.stream()
@@ -202,16 +276,30 @@ async def get_allocated_and_spent(request: CategoriesWithAllocatedRequest):
             print(f"DEBUG - Error calculating unallocated funds: {str(unallocated_error)}")
             unallocated_income = Decimal('0.0')
         
-        # Debug the final result structure before returning
-        # print(f"DEBUG - Final response structure: {{'allocated_and_spent': {allocated_and_spent}, 'unallocated_income': {unallocated_income}}}")
+        response = {"allocated_and_spent": allocated_and_spent, "unallocated_income": float(unallocated_income)}
+
+        # if size of cache plus size of val <= capacity
+        if len(gas_cache) == capacity:
+            # remove lfu item from cache
+            print(f'removing lfu from cache')
+            try:
+                remove_from_cache()
+            except Exception as e:
+                print(f'exception calling remove from cache with lfu: {e}')
+        print(f'adding to cache')
+        # Get today's date and end date in correct format
+        today = date.today()
+        end_date = datetime.strptime(request.end_date, "%Y-%m-%d").date()
+
+        # Compare the dates
+        date_in_cache_range = end_date < today
+        # print(f'end: {end_date}, today: {today}, in range: {date_in_cache_range}')
+        add_to_cache(req_hash, response, not date_in_cache_range)
         
-        # logger.info("Successfully fetched allocated amounts and spent amounts for user_id: %s", request.user_id)
-        return {"allocated_and_spent": allocated_and_spent, "unallocated_income": float(unallocated_income)}
+
+        return response
     
     except Exception as e:
-        # print(f"DEBUG - Exception in get-allocated-and-spent: {str(e)}")
-        # print(f"DEBUG - Exception type: {type(e)}")
-        # logger.error("Failed to get categories with allocated and spent amounts for user_id: %s, error: %s", request.user_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to get categories with allocated and spent amounts: {str(e)}")
 
 @router.post("/create-category")

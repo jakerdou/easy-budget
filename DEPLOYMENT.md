@@ -1,7 +1,7 @@
 # Budgeting App - Deployment
 
 ## Live App
-**URL**: https://easy-budget--9q2nx1x9qe.expo.app/
+**URL**: https://easy-budget.expo.app/
 
 ### Build
 ```bash
@@ -13,7 +13,7 @@ npx expo export --platform web
 npx expo export --platform web --clear
 ```
 
-### Deploy to Production
+### Deploy
 ```bash
 eas deploy
 ```

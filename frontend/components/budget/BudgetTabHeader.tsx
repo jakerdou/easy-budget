@@ -79,6 +79,7 @@ const BudgetTabHeader: React.FC<BudgetTabHeaderProps> = ({
                 <Text style={styles.incomeLoadingText}>Loading...</Text>
               </View>
             ) : (
+              // TODO: Should change unallocatedIncome to incomeThisPeriod
               <Text style={[styles.incomeValue, unallocatedIncome >= 0 ? styles.positiveValue : styles.negativeValue]}>
                 {unallocatedIncome >= 0 ? '$' : '-$'}{Math.abs(unallocatedIncome).toFixed(2)}
               </Text>

@@ -235,9 +235,6 @@ export default function Tab() {
       }
     }));
 
-    // Optimistically update unallocated income
-    setUnallocatedIncome(prev => prev - amountToAllocate);
-
     try {
       await createAssignment(assignment);
       // No need to fetch allocated and spent since we updated optimistically
@@ -251,7 +248,6 @@ export default function Tab() {
           spent: prev[category.id]?.spent || 0
         }
       }));
-      setUnallocatedIncome(prev => prev + amountToAllocate);
     } finally {
       // Remove category from fixing set after operation completes
       setFixingCategories(prev => {
@@ -290,9 +286,6 @@ export default function Tab() {
       }
     }));
 
-    // Optimistically update unallocated income
-    setUnallocatedIncome(prev => prev - shortfall);
-
     try {
       await createAssignment(assignment);
       // No need to fetch allocated and spent since we updated optimistically
@@ -306,7 +299,6 @@ export default function Tab() {
           spent: prev[category.id]?.spent || 0
         }
       }));
-      setUnallocatedIncome(prev => prev + shortfall);
     }
   };
 
