@@ -109,7 +109,7 @@ def add_to_cache(key: str, val: object, short_lived: bool) -> None:
         freqs[0] = {}
     freqs[0][key] = None
 
-def remove_from_cache(key: str | None = None) -> None:
+def remove_from_cache(key: Optional[str] = None) -> None:
     try:
         if key == None:
             min_freq = min(freqs)
